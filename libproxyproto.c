@@ -29,16 +29,14 @@
 #include <unistd.h>
 
 #include "strtonum.h"
+#include "libproxyproto.h"
 
 enum {
   LIBPROXYPROTO_V1 = (1 << 0),
   LIBPROXYPROTO_V2 = (1 << 1),
 };
 
-void _init(void);
 int (*sys_accept)(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
-#pragma GCC diagnostic ignored "-Wpedantic"
-int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 #pragma GCC diagnostic warning "-Wpedantic"
 int read_evt(int fd, struct sockaddr *from, socklen_t *fromlen);
 
@@ -48,7 +46,11 @@ char *debug;
 char *must_use_protocol_header;
 int version = LIBPROXYPROTO_V1 | LIBPROXYPROTO_V2;
 
+#ifdef LINK_LIBPROXYPROTO
+void proxyproto_init(void) {
+#else
 void _init(void) {
+#endif
   const char *err;
   char *env_version;
 
