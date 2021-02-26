@@ -40,7 +40,7 @@ int (*sys_accept)(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 #pragma GCC diagnostic warning "-Wpedantic"
 int read_evt(int fd, struct sockaddr *from, socklen_t *fromlen);
 
-const char v2sig[12] = "\x0D\x0A\x0D\x0A\x00\x0D\x0A\x51\x55\x49\x54\x0A";
+const char v2sig[12] ={0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A};
 
 char *debug;
 char *must_use_protocol_header;
@@ -106,36 +106,6 @@ LIBPROXYPROTO_DONE:
 
 /* returns 0 if needs to poll, <0 upon error or >0 if it did the job */
 int read_evt(int fd, struct sockaddr *from, socklen_t *fromlen) {
-  union {
-    struct {
-      char line[108];
-    } v1;
-    struct {
-      uint8_t sig[12];
-      uint8_t ver_cmd;
-      uint8_t fam;
-      uint16_t len;
-      union {
-        struct { /* for TCP/UDP over IPv4, len = 12 */
-          uint32_t src_addr;
-          uint32_t dst_addr;
-          uint16_t src_port;
-          uint16_t dst_port;
-        } ip4;
-        struct { /* for TCP/UDP over IPv6, len = 36 */
-          uint8_t src_addr[16];
-          uint8_t dst_addr[16];
-          uint16_t src_port;
-          uint16_t dst_port;
-        } ip6;
-        struct { /* for AF_UNIX sockets, len = 216 */
-          uint8_t src_addr[108];
-          uint8_t dst_addr[108];
-        } unx;
-      } addr;
-    } v2;
-  } hdr;
-
   ssize_t size, ret;
 
   do {
@@ -145,10 +115,23 @@ int read_evt(int fd, struct sockaddr *from, socklen_t *fromlen) {
   if (ret == -1)
     return (errno == EAGAIN) ? 0 : -1;
 
-  if (ret >= 16 && memcmp(&hdr.v2, v2sig, 12) == 0 &&
+  if (-1 == parse_prorocol(from, fromlen, &size, &ret)){
+    return -1;
+  }
+
+  /* we need to consume the appropriate amount of data from the socket */
+  do {
+    ret = recv(fd, &hdr, (size_t) size, 0);
+  } while (ret == -1 && errno == EINTR);
+  return (ret >= 0) ? 1 : -1;
+
+}
+
+int parse_prorocol(struct sockaddr *from, socklen_t *fromlen, ssize_t *size, ssize_t *ret) {
+  if (*ret >= 16 && memcmp(&hdr.v2, v2sig, 12) == 0 &&
       (hdr.v2.ver_cmd & 0xF0) == 0x20) {
-    size = 16 + ntohs(hdr.v2.len);
-    if (ret < size)
+    *size = 16 + ntohs(hdr.v2.len);
+    if (*ret < *size)
       return -1; /* truncated or too large header */
 
     if (from == NULL || !(version & LIBPROXYPROTO_V2))
@@ -190,7 +173,7 @@ int read_evt(int fd, struct sockaddr *from, socklen_t *fromlen) {
     default:
       return -1; /* not a supported command */
     }
-  } else if (ret >= 8 && memcmp(hdr.v1.line, "PROXY", 5) == 0) {
+  } else if (*ret >= 8 && memcmp(hdr.v1.line, "PROXY", 5) == 0) {
     char *end;
 
     char *str, *token;
@@ -199,13 +182,13 @@ int read_evt(int fd, struct sockaddr *from, socklen_t *fromlen) {
     unsigned char buf[sizeof(struct in6_addr)] = {0};
     uint16_t port;
 
-    end = memchr(hdr.v1.line, '\r', (size_t)ret - 1);
+    end = memchr(hdr.v1.line, '\r', (size_t)*ret - 1);
 
     if (!end || end[1] != '\n')
       return -1; /* partial or invalid header */
 
     *end = '\0';                  /* terminate the string to ease parsing */
-    size = end + 2 - hdr.v1.line; /* skip header + CRLF */
+    *size = end + 2 - hdr.v1.line; /* skip header + CRLF */
 
     if (from == NULL || !(version & LIBPROXYPROTO_V1))
       goto done;
@@ -289,11 +272,6 @@ int read_evt(int fd, struct sockaddr *from, socklen_t *fromlen) {
     /* Wrong protocol */
     return -1;
   }
-
 done:
-  /* we need to consume the appropriate amount of data from the socket */
-  do {
-    ret = recv(fd, &hdr, (size_t)size, 0);
-  } while (ret == -1 && errno == EINTR);
-  return (ret >= 0) ? 1 : -1;
+  return 0;
 }
