@@ -7,7 +7,7 @@ void _init(void);
 
 #pragma GCC diagnostic ignored "-Wpedantic"
 int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
-int parse_prorocol(struct sockaddr *from, socklen_t *fromlen, ssize_t *size, ssize_t *ret);
+int parse_protocol(struct sockaddr *from, socklen_t *fromlen, ssize_t *size, ssize_t *ret);
 
 typedef union {
   struct {

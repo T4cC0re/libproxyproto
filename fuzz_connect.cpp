@@ -33,7 +33,7 @@ void reset(void) {
 }
 
 int fuzz_and_parse(void) {
-  parse_prorocol((struct sockaddr *) &addr, &socklen, &a, &b);
+  parse_protocol((struct sockaddr *) &addr, &socklen, &a, &b);
   switch (addr.ss_family) {
     case AF_INET:
     case AF_INET6:

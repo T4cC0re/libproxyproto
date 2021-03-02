@@ -27,6 +27,7 @@
 #include <sys/socket.h>
 
 #include <unistd.h>
+#include <sys/poll.h>
 
 #include "strtonum.h"
 #include "libproxyproto.h"
@@ -108,14 +109,60 @@ LIBPROXYPROTO_DONE:
 int read_evt(int fd, struct sockaddr *from, socklen_t *fromlen) {
   ssize_t size, ret;
 
+  if (!must_use_protocol_header) {
+    // Because when we accept non-proxy connections, the client might expect
+    // the server to send some data first, we need to poll.
+    // If data arrives within 500ms, we continue as usual.
+    struct pollfd fd_poll;
+    ssize_t data_available;
+
+    fd_poll.fd = fd;
+    fd_poll.events = POLLIN;
+    data_available = poll(&fd_poll, 1, 500); // wait up to 500ms
+    switch (data_available) {
+      case -1:
+        // Error
+        return (errno == EAGAIN) ? 0 : -1;
+      case 0:
+        // Timeout, implicitly not proxy proto
+        return 0;
+      default:
+        if (ret < 5) {
+          // No proxy proto, as we cannot safely compare
+          return 0;
+        }
+
+        // peek 5 bytes to see if those match either protocol version
+        ret = recv(fd, &hdr, 5, MSG_PEEK);
+
+        if (ret < 5) {
+          // No proxy proto
+          return 0;
+        } else {
+          // We might read something that is not a proxy protocol, just compare here and short-circuit out.
+          if (memcmp(&hdr.v2, v2sig, 5) != 0 && memcmp(hdr.v1.line, "PROXY", 5) != 0) {
+            // No proxy proto
+            return 0;
+          }
+        }
+        break;
+    }
+  }
+
+  // When we know the client should use the proxy protocol, we know, they would send a header.
   do {
     ret = recv(fd, &hdr, sizeof(hdr), MSG_PEEK);
   } while (ret == -1 && errno == EINTR);
 
+  if (ret == 0) {
+    // We have no data to begin with
+    return 0;
+  }
+
   if (ret == -1)
     return (errno == EAGAIN) ? 0 : -1;
 
-  if (-1 == parse_prorocol(from, fromlen, &size, &ret)){
+  if (-1 == parse_protocol(from, fromlen, &size, &ret)){
     return -1;
   }
 
@@ -127,7 +174,7 @@ int read_evt(int fd, struct sockaddr *from, socklen_t *fromlen) {
 
 }
 
-int parse_prorocol(struct sockaddr *from, socklen_t *fromlen, ssize_t *size, ssize_t *ret) {
+int parse_protocol(struct sockaddr *from, socklen_t *fromlen, ssize_t *size, ssize_t *ret) {
   if (*ret >= 16 && memcmp(&hdr.v2, v2sig, 12) == 0 &&
       (hdr.v2.ver_cmd & 0xF0) == 0x20) {
     *size = 16 + ntohs(hdr.v2.len);
