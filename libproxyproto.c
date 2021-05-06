@@ -43,8 +43,8 @@ int read_evt(int fd, struct sockaddr *from, socklen_t *fromlen);
 
 const char v2sig[12] ={0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A};
 
-char *debug;
-char *must_use_protocol_header;
+char *proxyproto_debug = NULL;
+char *must_use_protocol_header = NULL;
 int version = LIBPROXYPROTO_V1 | LIBPROXYPROTO_V2;
 
 #ifdef LINK_LIBPROXYPROTO
@@ -55,7 +55,7 @@ void _init(void) {
   const char *err;
   char *env_version;
 
-  debug = getenv("LIBPROXYPROTO_DEBUG");
+  proxyproto_debug = getenv("LIBPROXYPROTO_DEBUG");
   must_use_protocol_header = getenv("LIBPROXYPROTO_MUST_USE_PROTOCOL_HEADER");
   env_version = getenv("LIBPROXYPROTO_VERSION");
 
@@ -79,21 +79,24 @@ void _init(void) {
 int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
   int fd;
 
+  // As hdr is static, we need to ensure it is zero-filled.
+  memset(&hdr, 0, sizeof(proxyproto_header));
+
   fd = sys_accept(sockfd, addr, addrlen);
   if (fd < 0)
     return fd;
 
-  if (debug)
+  if (proxyproto_debug)
     (void)fprintf(stderr, "accepted connection\n");
 
   if (read_evt(fd, addr, addrlen) <= 0) {
-    if (debug)
+    if (proxyproto_debug)
       (void)fprintf(stderr, "error: not proxy protocol\n");
 
     if (!must_use_protocol_header)
       goto LIBPROXYPROTO_DONE;
 
-    if (debug)
+    if (proxyproto_debug)
       (void)fprintf(stderr, "dropping connection\n");
 
     (void)close(fd);
@@ -190,7 +193,7 @@ int parse_protocol(struct sockaddr *from, socklen_t *fromlen, ssize_t *size, ssi
       case 0x11: /* TCPv4 */
         if (*fromlen < sizeof(struct sockaddr_in))
           return -1;
-        if (debug)
+        if (proxyproto_debug)
           (void)fprintf(stderr, "*** orig addr=%s:%u\n",
                         inet_ntoa(((struct sockaddr_in *)from)->sin_addr),
                         ntohs(((struct sockaddr_in *)from)->sin_port));
@@ -198,7 +201,7 @@ int parse_protocol(struct sockaddr *from, socklen_t *fromlen, ssize_t *size, ssi
         ((struct sockaddr_in *)from)->sin_addr.s_addr =
             hdr.v2.addr.ip4.src_addr;
         ((struct sockaddr_in *)from)->sin_port = hdr.v2.addr.ip4.src_port;
-        if (debug)
+        if (proxyproto_debug)
           (void)fprintf(stderr, "*** proxied addr=%s:%u\n",
                         inet_ntoa(((struct sockaddr_in *)from)->sin_addr),
                         ntohs(((struct sockaddr_in *)from)->sin_port));
@@ -250,7 +253,7 @@ int parse_protocol(struct sockaddr *from, socklen_t *fromlen, ssize_t *size, ssi
       if (token == NULL)
         return -1;
 
-      if (debug)
+      if (proxyproto_debug)
         (void)fprintf(stderr, "v1:%d:%s\n", j, token);
 
       switch (j) {
